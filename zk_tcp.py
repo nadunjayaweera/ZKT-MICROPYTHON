@@ -1,10 +1,10 @@
 import socket
 import struct
-import time
-from zk_util import create_tcp_header, parse_response, calculate_checksum
-from zk_commands import ZKCommands
+from time import sleep
+from zk_commands import COMMANDS, REQUEST_DATA, MAX_CHUNK
+from zk_util import create_tcp_header, remove_tcp_header, decode_user_data_72, decode_record_data_40, decode_record_real_time_log_52, decode_tcp_header, check_not_event_tcp
 
-class ZKTCP:
+class JTCP:
     def __init__(self, ip, port, timeout=10):
         self.ip = ip
         self.port = port
@@ -13,112 +13,146 @@ class ZKTCP:
         self.reply_id = 0
         self.socket = None
 
-    def connect(self):
+    def create_socket(self):
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(self.timeout)
             self.socket.connect((self.ip, self.port))
-            
-            # Send connection command
-            packet = create_tcp_header(ZKCommands.CMD_CONNECT, self.session_id, self.reply_id)
-            print(f"Sending packet: {packet.hex()}")
-            self.socket.send(packet)
-            
-            # Wait for the response
-            data = self.socket.recv(1024)
-            print(f"Received data: {data.hex()}")
-            response = parse_response(data)
-            
-            # Check if connection is successful
-            if response and response['command'] == ZKCommands.CMD_ACK_OK:
-                self.session_id = response['session_id']
-                self.reply_id = response['reply_id']
-                return True
-        except socket.timeout:
-            print("TCP connection timed out")
-        except Exception as e:
-            print(f"TCP connection failed: {e}")
-        return False
+            return True
+        except socket.error as e:
+            print("Socket error:", e)
+            return False
 
-    def send_command(self, command, data=b''):
-        self.reply_id += 1
-        packet = create_tcp_header(command, self.session_id, self.reply_id, data)
-        print(f"Sending packet: {packet.hex()}")
-        self.socket.send(packet)
+    def connect(self):
         try:
+            reply = self.execute_cmd(COMMANDS['CMD_CONNECT'], b'')
+            if reply:
+                return True
+            else:
+                raise Exception('NO_REPLY_ON_CMD_CONNECT')
+        except Exception as e:
+            print("Connection error:", e)
+            return False
+
+    def close_socket(self):
+        if self.socket:
+            self.socket.close()
+            self.socket = None
+
+    def write_message(self, msg, connect=False):
+        try:
+            self.socket.send(msg)
             data = self.socket.recv(1024)
-            print(f"Received data: {data.hex()}")
-            return parse_response(data)
+            return data
         except socket.timeout:
-            print("Socket timed out")
+            print("Timeout on writing message.")
             return None
+
+    def request_data(self, msg):
+        try:
+            self.socket.send(msg)
+            data = self.socket.recv(1024)
+            return data
+        except socket.timeout:
+            print("Timeout on receiving data.")
+            return None
+
+    def execute_cmd(self, command, data):
+        if command == COMMANDS['CMD_CONNECT']:
+            self.session_id = 0
+            self.reply_id = 0
+        else:
+            self.reply_id += 1
+
+        buf = create_tcp_header(command, self.session_id, self.reply_id, data)
+        reply = self.write_message(buf, command == COMMANDS['CMD_CONNECT'] or command == COMMANDS['CMD_EXIT'])
+
+        if reply:
+            r_reply = remove_tcp_header(reply)
+            if r_reply and len(r_reply) > 0:
+                if command == COMMANDS['CMD_CONNECT']:
+                    self.session_id = struct.unpack('<H', r_reply[4:6])[0]
+                return r_reply
+        return None
 
     def send_chunk_request(self, start, size):
         self.reply_id += 1
         req_data = struct.pack('<II', start, size)
-        packet = create_tcp_header(ZKCommands.CMD_DATA_RDY, self.session_id, self.reply_id, req_data)
-        self.socket.send(packet)
-        print(f"Sent chunk request: {packet.hex()}")
+        buf = create_tcp_header(COMMANDS['CMD_DATA_RDY'], self.session_id, self.reply_id, req_data)
+        self.socket.send(buf)
 
-    def read_with_buffer(self, req_data, callback=None):
+    def read_with_buffer(self, req_data, cb=None):
         self.reply_id += 1
-        packet = create_tcp_header(ZKCommands.CMD_DATA_WRRQ, self.session_id, self.reply_id, req_data)
-        self.socket.send(packet)
-        
-        total_buffer = b''
-        real_total_buffer = b''
-        try:
-            while True:
-                data = self.socket.recv(1024)
-                total_buffer += data
-                
-                # Process data to extract records
-                header = parse_response(total_buffer)
-                if header and header['command'] == ZKCommands.CMD_DATA:
-                    real_total_buffer += total_buffer[8:]
-                    if callback:
-                        callback(len(real_total_buffer))
-                    break
-        except socket.timeout:
-            print("Socket timed out while reading buffer")
+        buf = create_tcp_header(COMMANDS['CMD_DATA_WRRQ'], self.session_id, self.reply_id, req_data)
+        reply = self.request_data(buf)
 
-        return real_total_buffer
+        if reply:
+            header = decode_tcp_header(reply[:16])
+            if header['command_id'] == COMMANDS['CMD_DATA']:
+                return {'data': reply[16:], 'mode': 8}
+            elif header['command_id'] in [COMMANDS['CMD_ACK_OK'], COMMANDS['CMD_PREPARE_DATA']]:
+                size = struct.unpack('<I', reply[17:21])[0]
 
-    def disconnect(self):
-        packet = create_tcp_header(ZKCommands.CMD_EXIT, self.session_id, self.reply_id)
-        self.socket.send(packet)
-        self.socket.close()
+                total_packets = (size + MAX_CHUNK - 1) // MAX_CHUNK
+                reply_data = b''
+
+                for i in range(total_packets):
+                    start = i * MAX_CHUNK
+                    chunk_size = min(MAX_CHUNK, size - start)
+                    self.send_chunk_request(start, chunk_size)
+                    chunk_reply = self.request_data(buf)
+                    reply_data += chunk_reply[16:]
+
+                return {'data': reply_data, 'err': None}
+        return None
 
     def get_users(self):
-        # Send command to get users
-        data = self.read_with_buffer(create_tcp_header(ZKCommands.CMD_USER_WRQ, self.session_id, self.reply_id))
-        if data:
-            return self.parse_user_data(data)
-        return None
+        self.free_data()
+        data = self.read_with_buffer(REQUEST_DATA['GET_USERS'])
+        self.free_data()
 
-    def parse_user_data(self, data):
-        # Assuming each user data block is 72 bytes
-        USER_PACKET_SIZE = 72
         users = []
-        while len(data) >= USER_PACKET_SIZE:
-            user = struct.unpack('<HBB8s24sI9s', data[:USER_PACKET_SIZE])
+        user_data = data['data'][4:]
+        while len(user_data) >= 72:
+            user = decode_user_data_72(user_data[:72])
             users.append(user)
-            data = data[USER_PACKET_SIZE:]
-        return users
+            user_data = user_data[72:]
 
-    def get_attendances(self):
-        # Send command to get attendance logs
-        data = self.read_with_buffer(create_tcp_header(ZKCommands.CMD_ATTLOG_RRQ, self.session_id, self.reply_id))
-        if data:
-            return self.parse_attendance_data(data)
-        return None
+        return {'data': users}
 
-    def parse_attendance_data(self, data):
-        # Assuming each attendance data block is 40 bytes
-        RECORD_PACKET_SIZE = 40
+    def get_attendances(self, cb=None):
+        self.free_data()
+        data = self.read_with_buffer(REQUEST_DATA['GET_ATTENDANCE_LOGS'], cb)
+        self.free_data()
+
         records = []
-        while len(data) >= RECORD_PACKET_SIZE:
-            record = struct.unpack('<H9sI', data[:RECORD_PACKET_SIZE])
+        record_data = data['data'][4:]
+        while len(record_data) >= 40:
+            record = decode_record_data_40(record_data[:40])
             records.append(record)
-            data = data[RECORD_PACKET_SIZE:]
-        return records
+            record_data = record_data[40:]
+
+        return {'data': records}
+
+    def free_data(self):
+        self.execute_cmd(COMMANDS['CMD_FREE_DATA'], b'')
+
+    def disable_device(self):
+        self.execute_cmd(COMMANDS['CMD_DISABLEDEVICE'], REQUEST_DATA['DISABLE_DEVICE'])
+
+    def enable_device(self):
+        self.execute_cmd(COMMANDS['CMD_ENABLEDEVICE'], b'')
+
+    def disconnect(self):
+        self.execute_cmd(COMMANDS['CMD_EXIT'], b'')
+        self.close_socket()
+
+    def get_info(self):
+        data = self.execute_cmd(COMMANDS['CMD_GET_FREE_SIZES'], b'')
+        return {
+            'userCounts': struct.unpack('<I', data[24:28])[0],
+            'logCounts': struct.unpack('<I', data[40:44])[0],
+            'logCapacity': struct.unpack('<I', data[72:76])[0]
+        }
+
+    # Additional methods like getSerialNumber, getDeviceVersion, etc., follow a similar pattern
