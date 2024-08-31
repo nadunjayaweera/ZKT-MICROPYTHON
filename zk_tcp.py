@@ -112,13 +112,21 @@ class JTCP:
         self.free_data()
 
         users = []
-        user_data = data['data'][4:]
+        user_data = data['data'][4:]  # Skip the first 4 bytes of the data
+
         while len(user_data) >= 72:
-            user = decode_user_data_72(user_data[:72])
-            users.append(user)
-            user_data = user_data[72:]
+            try:
+                # Ensure we have exactly 72 bytes for each user record
+                user = decode_user_data_72(user_data[:72])
+                users.append(user)
+            except Exception as e:
+                print(f"Error decoding user data: {e}")
+            finally:
+                # Move to the next user record in the data
+                user_data = user_data[72:]
 
         return {'data': users}
+
 
     def get_attendances(self, cb=None):
         self.free_data()

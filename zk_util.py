@@ -99,13 +99,30 @@ def decode_user_data_28(user_data):
     return {'uid': uid, 'role': role, 'name': name, 'user_id': user_id}
 
 def decode_user_data_72(user_data):
-    uid = struct.unpack('<H', user_data[0:2])[0]
-    role = struct.unpack('<B', user_data[2:3])[0]
-    password = user_data[3:11].decode('ascii').split('\0')[0]
-    name = user_data[11:].decode('ascii').split('\0')[0]
-    cardno = struct.unpack('<L', user_data[35:39])[0]
-    user_id = user_data[48:57].decode('ascii').split('\0')[0]
-    return {'uid': uid, 'role': role, 'password': password, 'name': name, 'cardno': cardno, 'user_id': user_id}
+    if len(user_data) != 72:
+        print(f"Warning: Expected 72 bytes, but got {len(user_data)} bytes.")
+        return None  # Or handle this case differently if needed
+
+    try:
+        uid = struct.unpack('<H', user_data[0:2])[0]
+        role = struct.unpack('<B', user_data[2:3])[0]
+        password = user_data[3:11].decode('ascii', errors='ignore').split('\0')[0]
+        name = user_data[11:].decode('ascii', errors='ignore').split('\0')[0]
+        cardno = struct.unpack('<I', user_data[35:39])[0]
+        user_id = user_data[48:57].decode('ascii', errors='ignore').split('\0')[0]
+
+        return {
+            'uid': uid,
+            'role': role,
+            'password': password,
+            'name': name,
+            'cardno': cardno,
+            'user_id': user_id
+        }
+    except Exception as e:
+        print(f"Error decoding user data: {e}")
+        return None  # Handle the error and continue processing other records
+
 
 def decode_record_data_40(record_data):
     user_sn = struct.unpack('<H', record_data[0:2])[0]
