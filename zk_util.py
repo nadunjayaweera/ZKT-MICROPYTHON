@@ -1,31 +1,6 @@
 import struct
-
-USHRT_MAX = 65535
-COMMANDS = {
-    'CMD_CONNECT': 1000,
-    'CMD_EXIT': 1001,
-    'CMD_ENABLEDEVICE': 1002,
-    'CMD_DISABLEDEVICE': 1003,
-    'CMD_RESTART': 1004,
-    'CMD_GET_VERSION': 1100,
-    'CMD_PREPARE_DATA': 1500,
-    'CMD_DATA': 1501,
-    'CMD_FREE_DATA': 1502,
-    'CMD_DATA_WRRQ': 1503,
-    'CMD_DATA_RDY': 1504,
-    'CMD_ATTLOG_RRQ': 13,
-    'CMD_USER_WRQ': 8,
-    'CMD_REG_EVENT': 500,
-    'EF_ATTLOG': 1,
-    'EF_FINGER': 2,
-    'EF_ENROLLUSER': 4,
-    'EF_ENROLLFINGER': 8,
-    'EF_BUTTON': 16,
-    'EF_UNLOCK': 32,
-    'EF_VERIFY': 128,
-    'EF_FPFTR': 256,
-    'EF_ALARM': 512
-}
+from zk_commands import COMMANDS, USHRT_MAX
+from log import log
 
 def parse_time_to_date(time):
     second = time % 60
@@ -39,7 +14,8 @@ def parse_time_to_date(time):
     month = time % 12
     time = (time - month) // 12
     year = time + 2000
-    return (year, month, day, hour, minute, second)
+    
+    return (year, month + 1, day, hour, minute, second)
 
 def parse_hex_to_time(hex_data):
     time = {
@@ -50,6 +26,7 @@ def parse_hex_to_time(hex_data):
         'minute': hex_data[4],
         'second': hex_data[5]
     }
+    
     return (2000 + time['year'], time['month'] - 1, time['date'], time['hour'], time['minute'], time['second'])
 
 def create_checksum(buf):
@@ -61,29 +38,57 @@ def create_checksum(buf):
             chksum += struct.unpack('<H', buf[i:i+2])[0]
         chksum %= USHRT_MAX
     chksum = USHRT_MAX - chksum - 1
+  
     return chksum
 
 def create_udp_header(command, session_id, reply_id, data=b''):
-    buf = struct.pack('<HHHH', command, 0, session_id, reply_id) + data
+    data_buffer = data
+    buf = bytearray(8 + len(data_buffer))
+    
+    struct.pack_into('<H', buf, 0, command)
+    struct.pack_into('<H', buf, 2, 0)  # Placeholder for checksum
+    struct.pack_into('<H', buf, 4, session_id)
+    struct.pack_into('<H', buf, 6, reply_id)
+    
+    buf[8:] = data_buffer
+    
     checksum = create_checksum(buf)
-    packet = struct.pack('<HHHH', command, checksum, session_id, reply_id) + data
-    return packet
+    struct.pack_into('<H', buf, 2, checksum)
+    
+    reply_id = (reply_id + 1) % USHRT_MAX
+    struct.pack_into('<H', buf, 6, reply_id)
+    
+    return buf
 
 def create_tcp_header(command, session_id, reply_id, data=b''):
-    buf = struct.pack('<HHHH', command, 0, session_id, reply_id) + data
-    checksum = create_checksum(buf)
-    buf = struct.pack('<HHHH', command, checksum, session_id, reply_id) + data
+    data_buffer = data
+    buf = bytearray(8 + len(data_buffer))
     
-    prefix_buf = b'\x50\x50\x82\x7d\x13\x00\x00\x00'
-    prefix_buf = prefix_buf[:4] + struct.pack('<H', len(buf)) + prefix_buf[6:]
+    struct.pack_into('<H', buf, 0, command)
+    struct.pack_into('<H', buf, 2, 0)  # Placeholder for checksum
+    struct.pack_into('<H', buf, 4, session_id)
+    struct.pack_into('<H', buf, 6, reply_id)
+    
+    buf[8:] = data_buffer
+    
+    checksum = create_checksum(buf)
+    struct.pack_into('<H', buf, 2, checksum)
+    
+    reply_id = (reply_id + 1) % USHRT_MAX
+    struct.pack_into('<H', buf, 6, reply_id)
+    
+    prefix_buf = bytearray([0x50, 0x50, 0x82, 0x7d, 0x13, 0x00, 0x00, 0x00])
+    struct.pack_into('<H', prefix_buf, 4, len(buf))
     
     return prefix_buf + buf
 
 def remove_tcp_header(buf):
     if len(buf) < 8:
         return buf
+    
     if buf[:4] != b'\x50\x50\x82\x7d':
         return buf
+    
     return buf[8:]
 
 def decode_user_data_28(user_data):
@@ -148,10 +153,9 @@ def check_not_event_tcp(data):
         event = struct.unpack('<H', data[4:6])[0]
         return event == COMMANDS['EF_ATTLOG'] and command_id == COMMANDS['CMD_REG_EVENT']
     except Exception as e:
-        # Log the error if needed
-        print(f"Error in check_not_event_tcp: {str(e)}")
+        log(f"[228] : {str(e)} ,{data.hex()} ")
         return False
 
 def check_not_event_udp(data):
-    command_id = decode_udp_header(data[0:8])['command_id']
+    command_id = decode_udp_header(data[:8])['command_id']
     return command_id == COMMANDS['CMD_REG_EVENT']

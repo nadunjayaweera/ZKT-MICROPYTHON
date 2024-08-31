@@ -1,10 +1,11 @@
 import socket
 import time
+import asyncio
 from handler import ZKError, ERROR_TYPES
 from zk_tcp import JTCP
 from zk_udp import JUDP
 
-class ZKHLIB:
+class ZKLIB:
     def __init__(self, ip, port=4370, timeout=30, inport=4000):
         self.connection_type = None
         self.jtcp = JTCP(ip, port, timeout)
@@ -160,10 +161,24 @@ class ZKHLIB:
 
 # Example usage for testing TCP connection
 if __name__ == "__main__":
-    try:
-        zklib = ZKHLIB("192.168.1.235", 4370, 30)
-        zklib.create_socket()
-    except ZKError as e:
-        print(e.toast())
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+    async def test():
+        zk_instance = ZKLIB("192.168.1.235", 4370, 30)
+        try:
+            # Create socket to machine
+            zk_instance.create_socket()
+
+            # Get general info like logCapacity, user counts, logs count
+            print("Device Info:", zk_instance.get_info())
+
+            # Retrieve users
+            users = zk_instance.get_users()
+            print("User Details:", users['data'])
+
+        except Exception as e:
+            print("Error:", e)
+        finally:
+            # Disconnect from the device
+            zk_instance.disconnect()
+
+    # Run the test function
+    asyncio.run(test())

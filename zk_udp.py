@@ -166,3 +166,16 @@ class JUDP:
                 continue
             if len(data) == 18:
                 cb(decode_record_real_time_log_18(data))
+
+    def get_info(self):
+        try:
+            data = self.execute_cmd(COMMANDS['CMD_GET_FREE_SIZES'], b'')
+            if data:
+                return {
+                    'userCounts': struct.unpack('<I', data[24:28])[0],
+                    'logCounts': struct.unpack('<I', data[40:44])[0],
+                    'logCapacity': struct.unpack('<I', data[72:76])[0]
+                }
+        except Exception as err:
+            print(f"Error getting info: {err}")
+            return None
