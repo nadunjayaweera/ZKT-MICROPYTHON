@@ -1,0 +1,1 @@
+Run main.py. It requests ONLY the first 2048-byte attendance chunk, prints the header and three raw records, and does NOT write attendance.json. Share the console output to diagnose byte alignment. It does not delete attendance records from the ZKT device. Do not enable full JSON export until valid timestamps have been confirmed.

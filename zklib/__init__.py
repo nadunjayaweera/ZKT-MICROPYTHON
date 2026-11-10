@@ -20,3 +20,9 @@ class ZKLib:
 
     def get_attendances(self):
         return self.zklib_tcp.get_attendances()
+
+    def save_attendances_json(self, filename="attendance.json", chunk_size=2048):
+        return self.zklib_tcp.save_attendances_json(filename, chunk_size)
+
+    def diagnose_attendance(self, chunk_size=2048):
+        return self.zklib_tcp.diagnose_attendance(chunk_size)

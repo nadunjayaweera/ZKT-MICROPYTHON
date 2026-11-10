@@ -1,22 +1,27 @@
-# micropython_zklib/main.py
 from zklib import ZKLib
-try:
-    import ujson as json
-except ImportError:
-    import json
 
-def test():
-    zk = ZKLib("192.168.1.230", 4370)
+# Update to your ZKT machine address.
+DEVICE_IP = "192.168.1.236"
+
+def main():
+    zk = ZKLib(DEVICE_IP, 4370, timeout=30000)
     try:
         zk.create_socket()
         zk.connect()
-        attendances = zk.get_attendances()
-        with open("attendance.json", "w") as f:
-            f.write(json.dumps(attendances, indent=4))
-        print("Attendance data saved to attendance.json")
-        zk.disconnect()
+        # Read small chunks; write complete attendance records as JSON.
+        # The device records are never cleared by this export.
+        count = zk.save_attendances_json("attendance.json", chunk_size=2048)
+        print("Export completed: %d records" % count)
+    except OSError as e:
+        print("Storage or network error:", e)
+        print("ESP8266 may not have enough flash space for 57,856 JSON records.")
     except Exception as e:
-        print(f"Error: {e}")
+        print("Error:", e)
+    finally:
+        try:
+            zk.disconnect()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
-    test()
+    main()
