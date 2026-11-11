@@ -26,3 +26,6 @@ class ZKLib:
 
     def diagnose_attendance(self, chunk_size=2048):
         return self.zklib_tcp.diagnose_attendance(chunk_size)
+
+    def attendance_page(self, cursor=None, limit=10):
+        return self.zklib_tcp.attendance_page(cursor, limit)

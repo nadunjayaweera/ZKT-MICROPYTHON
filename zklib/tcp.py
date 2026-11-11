@@ -408,6 +408,119 @@ class ZKLibTCP:
             except Exception:
                 pass
 
+    def _request_attendance_chunk(self, offset, length):
+        if length <= 0 or length > 2048:
+            raise ValueError("requested read must be 1..2048 bytes")
+        self.send_chunk_request(offset, length)
+        for _ in range(4):
+            command, payload = self._read_packet_stream()
+            if command == CMD_ACK_OK and not payload:
+                continue
+            if command == CMD_ACK_ERROR:
+                raise ZKError("ZKT rejected chunk at offset %d" % offset)
+            return self._receive_chunk(length, offset, command, payload)
+        raise ZKError("No data response at offset %d" % offset)
+
+    def _prepare_attendance_page(self):
+        # Prepare a NEW device-side attendance buffer for this HTTP request.
+        # Offsets below belong only to this buffer, not to previous sessions.
+        self.reply_id += 1
+        request = create_tcp_header(CMD_DATA_WRRQ, self.session_id,
+                                    self.reply_id, GET_ATTENDANCE_LOGS)
+        self.socket.sendall(request)
+        cmd, payload = self._read_packet_stream()
+        if cmd == CMD_ACK_ERROR:
+            raise ZKError("Device rejected attendance read")
+        if cmd == CMD_ACK_OK and len(payload) < 5:
+            cmd, payload = self._read_packet_stream()
+        if cmd not in (CMD_ACK_OK, CMD_PREPARE_DATA):
+            raise ZKError("Unexpected attendance prepare response %d" % cmd)
+        total_bytes = self._transfer_size(payload)
+        if total_bytes < 4:
+            raise ZKError("Unexpected attendance transfer size: %d" % total_bytes)
+        header = self._request_attendance_chunk(0, 4)
+        data_bytes = struct.unpack('<I', header)[0]
+        if data_bytes + 4 != total_bytes or data_bytes % 40:
+            raise ZKError("Invalid record header: announced=%d, internal=%d" %
+                          (total_bytes, data_bytes))
+        return data_bytes // 40
+
+    def attendance_page(self, cursor=None, limit=10):
+        """Return a small page and stable record-boundary cursor.
+
+        cursor: None or 'recordIndex.hexOfPreviousRaw40ByteRecord'.
+        Checks the preceding raw record on every page, rejecting most shifts.
+        Requires ZKT firmware to permit nonzero offsets in a fresh buffer.
+        """
+        try:
+            import ubinascii as binascii
+        except ImportError:
+            import binascii
+        if not isinstance(limit, int) or limit < 1 or limit > 20:
+            raise ValueError("limit must be an integer from 1 to 20")
+        index = 0
+        anchor = None
+        if cursor is not None and cursor != '':
+            if not isinstance(cursor, str):
+                raise ValueError("cursor must be a string or null")
+            parts = cursor.split('.')
+            if len(parts) != 2 or not parts[0].isdigit() or len(parts[1]) != 80:
+                raise ValueError("Invalid cursor format")
+            index = int(parts[0])
+            if index < 1:
+                raise ValueError("Invalid cursor index")
+            anchor = parts[1].lower()
+            try:
+                binascii.unhexlify(anchor)
+            except Exception:
+                raise ValueError("Invalid cursor fingerprint")
+
+        # All temporary ZKT buffers are released; device attendance records
+        # themselves are NEVER deleted or cleared.
+        try:
+            self.free_data()
+            count = self._prepare_attendance_page()
+            if index > count:
+                raise ValueError("CURSOR_STALE: saved index exceeds record count")
+            if anchor is not None:
+                previous = self._request_attendance_chunk(4 + (index - 1) * 40, 40)
+                if binascii.hexlify(previous).decode().lower() != anchor:
+                    raise ValueError("CURSOR_STALE: previous record changed")
+
+            take = min(limit, count - index)
+            records = []
+            last_raw = None
+            # Bound device read to <=800 bytes and <=20 decoded objects.
+            if take:
+                blob = self._request_attendance_chunk(4 + index * 40, take * 40)
+                for start in range(0, len(blob), 40):
+                    raw = blob[start:start + 40]
+                    obj = decode_record_data_40(raw)
+                    if obj['record_time'] == '2000-1-1 0:0:0':
+                        raise ZKError("Zero timestamp at record %d" % (index + len(records)))
+                    obj['ip'] = self.ip
+                    records.append(obj)
+                    last_raw = raw
+            next_index = index + take
+            next_anchor = (binascii.hexlify(last_raw).decode()
+                           if last_raw is not None else anchor)
+            next_cursor = (str(next_index) + '.' + next_anchor
+                           if next_index else None)
+            return {
+                'success': True,
+                'records': records,
+                'count': len(records),
+                'total_records': count,
+                'has_more': next_index < count,
+                'next_cursor': next_cursor,
+                'device_ip': self.ip
+            }
+        finally:
+            try:
+                self.free_data()
+            except Exception:
+                pass
+
     def get_attendances(self):
         # Compatibility API: this still accumulates all records in RAM.
         return list(self.iter_attendances())
