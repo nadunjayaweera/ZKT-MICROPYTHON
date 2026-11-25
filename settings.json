@@ -1,0 +1,11 @@
+{
+  "wifi_ssid": "Talentfort",
+  "wifi_password": "",
+  "device_ip": "192.168.1.236",
+  "device_port": 4370,
+  "device_password": 0,
+  "device_id": "zkt-001",
+  "backend_base_url": "http://127.0.0.1:3000",
+  "backend_api_key": "abcdefgh1234567890",
+  "page_limit": 30
+}

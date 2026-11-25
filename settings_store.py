@@ -21,14 +21,18 @@ def load():
 def validate(values):
     if not isinstance(values, dict):
         raise ValueError('Invalid settings format')
-    for field in ('wifi_ssid', 'wifi_password', 'device_ip', 'device_id',
-                  'backend_base_url', 'backend_api_key'):
+    for field in ('device_ip', 'device_id', 'backend_base_url', 'backend_api_key'):
         if not isinstance(values.get(field), str) or not values[field].strip():
             raise ValueError('Missing: ' + field)
+    # Wi-Fi credentials are optional when running on a Windows/Linux laptop.
+    # ESP32 Wi-Fi connection is handled separately by connect_wifi().
+    for field in ('wifi_ssid', 'wifi_password'):
+        if not isinstance(values.get(field, ''), str):
+            raise ValueError('Invalid: ' + field)
     for field in ('wifi_ssid', 'device_ip', 'device_id', 'backend_base_url'):
         if len(values[field]) > 160:
             raise ValueError('Field too long: ' + field)
-    if len(values['wifi_password']) > 63 or len(values['backend_api_key']) > 200:
+    if len(values.get('wifi_password', '')) > 63 or len(values['backend_api_key']) > 200:
         raise ValueError('Password/key too long')
     # MicroPython builds may not implement str.isalnum(); validate explicitly.
     device_id = values['device_id']
@@ -50,8 +54,8 @@ def validate(values):
         values['page_limit'] = int(values.get('page_limit', 5))
     except (ValueError, TypeError):
         raise ValueError('Invalid numeric fields')
-    if not 1 <= values['device_port'] <= 65535 or not 1 <= values['page_limit'] <= 20:
-        raise ValueError('Device port or page limit out of range')
+    if not 1 <= values['device_port'] <= 65535 or values['page_limit'] < 1:
+        raise ValueError('Device port must be 1..65535 and page limit must be positive')
     return values
 
 def save(values):

@@ -1,4 +1,5 @@
 # ZKT ESP32 Attendance Sync
+
 ## Complete installation and user guide (Thonny + MicroPython)
 
 This project reads attendance records from a ZKT biometric machine using an ESP32, then sends them to a Node.js backend. The ESP32 connects to Wi-Fi and initiates all communication. It does not require the backend to connect directly to the ESP32.
@@ -275,16 +276,16 @@ The setup page may not open automatically; entering the address manually is expe
 
 ## 6.1 Fill in the setup form
 
-| Field | What to enter | Example |
-|---|---|---|
-| Wi-Fi SSID | Name of your normal Wi-Fi network | `Office-WiFi` |
-| Wi-Fi password | Password of that Wi-Fi network | Your Wi-Fi password |
-| ZKT machine IP | LAN IP address of the biometric machine | `192.168.1.236` |
-| ZKT port | ZKT communication port (usually 4370) | `4370` |
-| Device ID | Unique, stable ID for this attendance machine | `zkt-001` |
-| Backend URL | PC/server address and backend port | `http://192.168.1.38:3000` |
-| Backend API key | Exact `DEVICE_API_KEY` from backend `.env` | Same secret |
-| Records per page | Number of records sent per batch, from 1 to 20 | `5` |
+| Field            | What to enter                                  | Example                    |
+| ---------------- | ---------------------------------------------- | -------------------------- |
+| Wi-Fi SSID       | Name of your normal Wi-Fi network              | `Office-WiFi`              |
+| Wi-Fi password   | Password of that Wi-Fi network                 | Your Wi-Fi password        |
+| ZKT machine IP   | LAN IP address of the biometric machine        | `192.168.1.236`            |
+| ZKT port         | ZKT communication port (usually 4370)          | `4370`                     |
+| Device ID        | Unique, stable ID for this attendance machine  | `zkt-001`                  |
+| Backend URL      | PC/server address and backend port             | `http://192.168.1.38:3000` |
+| Backend API key  | Exact `DEVICE_API_KEY` from backend `.env`     | Same secret                |
+| Records per page | Number of records sent per batch, from 1 to 20 | `5`                        |
 
 Use a unique Device ID for each physical ZKT machine. Keep the same Device ID after rebooting or changing Wi-Fi. Changing it makes the backend treat it as a different device with a separate sync cursor.
 
@@ -328,14 +329,14 @@ LED_PIN = 2
 LED_ACTIVE_HIGH = True
 ```
 
-| LED pattern | Meaning |
-|---|---|
-| Slow blink | ESP32 setup hotspot is active |
-| Fast blink | Connecting to saved Wi-Fi |
-| Solid on | Wi-Fi connected / idle |
+| LED pattern  | Meaning                                |
+| ------------ | -------------------------------------- |
+| Slow blink   | ESP32 setup hotspot is active          |
+| Fast blink   | Connecting to saved Wi-Fi              |
+| Solid on     | Wi-Fi connected / idle                 |
 | Double pulse | Reading attendance or uploading a page |
-| Short flash | A page was acknowledged by the backend |
-| Triple pulse | Sync or network error; retrying |
+| Short flash  | A page was acknowledged by the backend |
+| Triple pulse | Sync or network error; retrying        |
 
 **Hardware note:** GPIO2 is common on some classic ESP32 boards, but it is not universal. Some ESP32-S3 boards use an addressable RGB (WS2812/NeoPixel) LED instead of a simple GPIO LED. This project's default GPIO LED driver will not necessarily control that RGB LED. If your board has no controllable GPIO2 LED, use a suitable external LED and current-limiting resistor, or adapt the LED driver for your board. Never connect an LED directly to a GPIO without a resistor.
 
@@ -377,12 +378,12 @@ Important:
 
 All attendance endpoints require the matching Bearer API key.
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/health` | Check backend health |
-| GET | `/api/attendance/sync-state?device_id=zkt-001` | Read the saved cursor for a device |
-| POST | `/api/attendance/batches` | Receive and commit an attendance page |
-| GET | `/api/attendance/records?device_id=zkt-001&offset=0&limit=20` | View stored records |
+| Method | Endpoint                                                      | Purpose                               |
+| ------ | ------------------------------------------------------------- | ------------------------------------- |
+| GET    | `/health`                                                     | Check backend health                  |
+| GET    | `/api/attendance/sync-state?device_id=zkt-001`                | Read the saved cursor for a device    |
+| POST   | `/api/attendance/batches`                                     | Receive and commit an attendance page |
+| GET    | `/api/attendance/records?device_id=zkt-001&offset=0&limit=20` | View stored records                   |
 
 Replace `zkt-001` with the Device ID configured on the ESP32.
 

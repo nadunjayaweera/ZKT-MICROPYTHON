@@ -29,7 +29,7 @@ class ZKLibTCP:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(self.timeout / 1000) # Convert ms to seconds
             self.socket.connect((self.ip, self.port))
-        except socket.error as e:
+        except OSError as e:
             raise ZKConnectionError(f"Connection failed: {e}")
 
     def connect(self):
@@ -456,8 +456,8 @@ class ZKLibTCP:
             import ubinascii as binascii
         except ImportError:
             import binascii
-        if not isinstance(limit, int) or limit < 1 or limit > 20:
-            raise ValueError("limit must be an integer from 1 to 20")
+        if not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
         index = 0
         anchor = None
         if cursor is not None and cursor != '':
@@ -480,6 +480,23 @@ class ZKLibTCP:
         try:
             self.free_data()
             count = self._prepare_attendance_page()
+            # Validate the terminal slot BEFORE choosing a page size. Some
+            # firmware advertises an incomplete/temporary final 40-byte slot.
+            # Hold that slot, but never move the committed cursor over it.
+            # The next poll re-reads it, allowing a legitimate punch to recover.
+            if count:
+                from .helpers import validate_attendance_record
+                terminal = self._request_attendance_chunk(
+                    4 + (count - 1) * 40, 40)
+                if len(terminal) != 40:
+                    raise ZKError("Short terminal attendance record")
+                terminal_obj = decode_record_data_40(terminal)
+                terminal_reason = validate_attendance_record(terminal_obj)
+                if terminal_reason:
+                    print('Holding invalid terminal ZKT slot at index', count,
+                          'reason:', terminal_reason,
+                          '(not uploaded, not cursor-committed)')
+                    count -= 1
             if index > count:
                 raise ValueError("CURSOR_STALE: saved index exceeds record count")
             if anchor is not None:
@@ -487,18 +504,44 @@ class ZKLibTCP:
                 if binascii.hexlify(previous).decode().lower() != anchor:
                     raise ValueError("CURSOR_STALE: previous record changed")
 
-            take = min(limit, count - index)
+            # The requested limit is unrestricted. The actual transport page is
+            # automatically bounded by available heap and HTTP payload capacity.
+            # Each ZKT chunk is at most 2048 bytes; records remain 40 bytes.
+            try:
+                import gc
+                gc.collect()
+                available = gc.mem_free()
+            except Exception:
+                available = 65536  # Desktop fallback
+            # 250 bytes per JSON record is a conservative planning estimate.
+            # A record containing raw_hex and validation notes is usually smaller.
+            max_records = max(1, min((available // 4) // 250, 10000 // 250))
+            take = min(limit, count - index, max_records)
             records = []
             last_raw = None
-            # Bound device read to <=800 bytes and <=20 decoded objects.
-            if take:
-                blob = self._request_attendance_chunk(4 + index * 40, take * 40)
+            # Read a bounded number of bytes per request, not one giant blob.
+            while len(records) < take:
+                amount = min(40, take - len(records))
+                blob = self._request_attendance_chunk(
+                    4 + (index + len(records)) * 40, amount * 40)
+                if len(blob) != amount * 40:
+                    raise ZKError("Short attendance chunk at record %d" %
+                                  (index + len(records)))
                 for start in range(0, len(blob), 40):
                     raw = blob[start:start + 40]
                     obj = decode_record_data_40(raw)
-                    if obj['record_time'] == '2000-1-1 0:0:0':
-                        raise ZKError("Zero timestamp at record %d" % (index + len(records)))
                     obj['ip'] = self.ip
+                    # Always preserve original bytes for forensic investigation.
+                    obj['raw_hex'] = binascii.hexlify(raw).decode()
+                    # Never skip a malformed interior record: doing so would
+                    # make the index/raw-byte cursor inconsistent and risk loss.
+                    from .helpers import validate_attendance_record
+                    reason = validate_attendance_record(obj)
+                    if reason:
+                        raise ZKError('INVALID_ATTENDANCE_RECORD at index %d: %s; '
+                                      'cursor unchanged for this page' %
+                                      (index + len(records) + 1, reason))
+                    obj['validation_status'] = 'VALID'
                     records.append(obj)
                     last_raw = raw
             next_index = index + take

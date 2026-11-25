@@ -134,10 +134,11 @@ def run_sync(cfg, led):
 def run():
     led = StatusLED(device_config.LED_PIN, device_config.LED_ACTIVE_HIGH)
     cfg = settings_store.load()
-    try:
-        settings_store.validate(cfg)
-    except Exception:
-        cfg = None
+    if cfg is not None:
+        try:
+            cfg = settings_store.validate(cfg)
+        except Exception as exc:
+            raise RuntimeError('Invalid settings.json: %s' % exc)
     try:
         while True:
             if cfg is None:
@@ -151,6 +152,9 @@ def run():
                 cfg = wifi_portal.run(led, 'Saved Wi-Fi network unavailable; update settings')
                 continue
             try:
+                if get_wlan() is not None:
+                    import web_config
+                    web_config.start()
                 run_sync(cfg, led)
                 led.set('ready')
                 sleep_seconds(device_config.POLL_SECONDS)
@@ -161,7 +165,11 @@ def run():
                 print('Sync cycle failed:', exc)
                 try:
                     import sys
-                    sys.print_exception(exc)
+                    if hasattr(sys, 'print_exception'):
+                        sys.print_exception(exc)
+                    else:
+                        import traceback
+                        traceback.print_exc()
                 except AttributeError:
                     import traceback
                     traceback.print_exc()

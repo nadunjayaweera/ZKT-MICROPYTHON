@@ -73,3 +73,31 @@ def decode_tcp_header(header):
     payload_size = struct.unpack('<H', header[4:6])[0]
     command_id, check_sum, session_id, reply_id = struct.unpack('<HHHH', recv_data[:8])
     return {'command_id': command_id, 'check_sum': check_sum, 'session_id': session_id, 'reply_id': reply_id, 'payload_size': payload_size}
+
+
+def validate_attendance_record(record):
+    """Conservative validation: never pretend to repair unknown raw bytes."""
+    uid = record.get('device_user_id', '')
+    if not uid or not uid.strip():
+        return 'EMPTY_DEVICE_USER_ID'
+    try:
+        parts = record.get('record_time', '').replace(' ', '-').replace(':', '-').split('-')
+        if len(parts) != 6:
+            return 'INVALID_TIMESTAMP_FORMAT'
+        year, month, day, hour, minute, second = [int(p) for p in parts]
+        if year < 2000 or year > 2035:
+            return 'IMPLAUSIBLE_TIMESTAMP_YEAR'
+        if not 1 <= month <= 12 or not 0 <= hour <= 23 or not 0 <= minute <= 59 or not 0 <= second <= 59:
+            return 'INVALID_TIMESTAMP_COMPONENT'
+        if month == 2:
+            leap = (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0))
+            days = 29 if leap else 28
+        elif month in (4, 6, 9, 11):
+            days = 30
+        else:
+            days = 31
+        if day < 1 or day > days:
+            return 'INVALID_CALENDAR_DATE'
+    except (ValueError, TypeError, AttributeError):
+        return 'INVALID_TIMESTAMP_FORMAT'
+    return None

@@ -86,7 +86,7 @@ def _page(saved, message=''):
         ('device_id', 'Device ID (stable)', 'text', 'zkt-001'),
         ('backend_base_url', 'Backend URL', 'url', 'http://192.168.1.38:3000'),
         ('backend_api_key', 'Backend API key', 'password', ''),
-        ('page_limit', 'Records per page (1-20)', 'number', '5'),
+        ('page_limit', 'Requested records per page (positive integer)', 'number', '5'),
     )
     controls = []
     for key, title, kind, default in fields:
